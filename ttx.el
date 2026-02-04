@@ -71,8 +71,9 @@ Set to nil to start with only the skeleton."
           "<ttFont>\n"
           "  <!-- Available tables (use ttx-load-table to load): -->\n"
           (mapconcat (lambda (table)
-                       (format "  <!-- %s (%d bytes) -->"
-                               (car table) (cdr table)))
+                       (format "  <!-- %s (%s) -->"
+                               (car table)
+                               (file-size-human-readable (cdr table) 'iec)))
                      tables "\n")
           "\n</ttFont>\n"))
 
