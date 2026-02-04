@@ -84,17 +84,18 @@ Set to nil to start with only the skeleton."
 
 (defun ttx--extract-table-xml (xml-output table-tag)
   "Extract just the TABLE-TAG element from XML-OUTPUT."
-  (with-temp-buffer
-    (insert xml-output)
-    (goto-char (point-min))
-    (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote table-tag)))
-          (end-regex (format "^\\s-*</%s>" (regexp-quote table-tag))))
-      (when (re-search-forward start-regex nil t)
-        (beginning-of-line)
-        (let ((start (point)))
-          (if (re-search-forward end-regex nil t)
-              (buffer-substring-no-properties start (point))
-            nil))))))
+  (let ((table-tag (string-replace "/" "_" table-tag)))
+    (with-temp-buffer
+      (insert xml-output)
+      (goto-char (point-min))
+      (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote table-tag)))
+            (end-regex (format "^\\s-*</%s>" (regexp-quote table-tag))))
+        (when (re-search-forward start-regex nil t)
+          (beginning-of-line)
+          (let ((start (point)))
+            (if (re-search-forward end-regex nil t)
+                (buffer-substring-no-properties start (point))
+              nil)))))))
 
 (defun ttx--init-buffer (filename)
   "Initialize buffer for FILENAME with table skeleton."
@@ -124,14 +125,14 @@ Set to nil to start with only the skeleton."
                               nil t)))))
   (unless ttx-font-filename
     (user-error "No font file associated with this buffer"))
-  (let* ((xml-output (shell-command-to-string
-                      (format "%s -q -t %s -o - %s"
-                              ttx-command
-                              (shell-quote-argument table-tag)
-                              (shell-quote-argument ttx-font-filename))))
+  (let* ((cmd (format "%s -q -t %s -o - %s"
+                      ttx-command
+                      (shell-quote-argument table-tag)
+                      (shell-quote-argument ttx-font-filename)))
+         (xml-output (shell-command-to-string cmd))
          (table-xml (ttx--extract-table-xml xml-output table-tag)))
     (unless table-xml
-      (user-error "Failed to extract table %s" table-tag))
+      (user-error "Failed to extract table %s with %s" table-tag cmd))
     (let ((inhibit-read-only t))
       (goto-char (point-max))
       (when (re-search-backward "</ttFont>" nil t)
@@ -175,8 +176,8 @@ Set to nil to start with only the skeleton."
 
 (defvar ttx-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "l" #'ttx-load-table)
-    (define-key map "u" #'ttx-unload-table)
+    (define-key map (kbd "C-c C-l") #'ttx-load-table)
+    (define-key map (kbd "C-c C-k") #'ttx-unload-table)
     map)
   "Keymap for `ttx-mode'.")
 
