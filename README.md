@@ -9,7 +9,7 @@ Inspect ttf/otf files as XML.
 Add `ttx.el` to your load path and require it:
 
 ```elisp
-(add-to-list 'load-path "/path/to/ttx-el")
+(add-to-list 'load-path "/path/to/ttx-mode")
 (require 'ttx)
 ```
 

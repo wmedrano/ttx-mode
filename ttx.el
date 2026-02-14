@@ -6,7 +6,7 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "30.0"))
 ;; Keywords: tools, fonts
-;; URL: https://github.com/wmedrano/ttx-el
+;; URL: https://github.com/wmedrano/ttx-mode
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
