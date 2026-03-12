@@ -1,4 +1,4 @@
-;;; ttx.el --- TrueType/OpenType font viewer using ttx -*- lexical-binding: t; -*-
+;;; ttx-mode.el --- TrueType/OpenType font viewer using ttx -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 wmedrano
 
@@ -24,7 +24,9 @@
 ;;; Commentary:
 
 ;; This package provides a major mode for viewing TrueType and OpenType
-;; font files as XML by using the `ttx` utility from fonttools.
+;; font files as XML by using the `ttx` utility from fonttools.  WOFF2
+;; files are also supported by first decompressing them with the
+;; `woff2_decompress` utility.
 
 ;;; Code:
 
@@ -40,6 +42,11 @@
   :type 'string
   :group 'ttx)
 
+(defcustom ttx-woff2-decompress-command "woff2_decompress"
+  "Path to the woff2_decompress executable."
+  :type 'string
+  :group 'ttx)
+
 (defcustom ttx-default-tables '("head" "name")
   "List of table tags to load automatically when opening a font file.
 Set to nil to start with only the skeleton."
@@ -48,6 +55,9 @@ Set to nil to start with only the skeleton."
 
 (defvar-local ttx-font-filename nil
   "The filename of the font being viewed in this buffer.")
+
+(defvar-local ttx--temp-dir nil
+  "Temporary directory used for woff2 decompression, cleaned up on buffer kill.")
 
 (defvar-local ttx--available-tables nil
   "Alist of (TAG . LENGTH) for all tables in the font.")
@@ -97,6 +107,31 @@ Set to nil to start with only the skeleton."
             (if (re-search-forward end-regex nil t)
                 (buffer-substring-no-properties start (point))
               nil)))))))
+
+(defun ttx--decompress-woff2 (woff2-filename)
+  "Decompress WOFF2-FILENAME to a temp directory and return the resulting .ttf path.
+The temp directory is stored in `ttx--temp-dir' and cleaned up on buffer kill."
+  (let* ((temp-dir (make-temp-file "ttx-woff2-" t))
+         (base (file-name-nondirectory woff2-filename))
+         (temp-woff2 (expand-file-name base temp-dir))
+         (ttf-name (concat (file-name-sans-extension base) ".ttf"))
+         (temp-ttf (expand-file-name ttf-name temp-dir)))
+    (copy-file woff2-filename temp-woff2)
+    (let ((exit-code (call-process ttx-woff2-decompress-command nil nil nil temp-woff2)))
+      (unless (zerop exit-code)
+        (delete-directory temp-dir t)
+        (error "woff2_decompress failed with exit code %d for %s" exit-code woff2-filename)))
+    (unless (file-exists-p temp-ttf)
+      (delete-directory temp-dir t)
+      (error "woff2_decompress did not produce %s" temp-ttf))
+    (setq ttx--temp-dir temp-dir)
+    (add-hook 'kill-buffer-hook #'ttx--cleanup-temp-dir nil t)
+    temp-ttf))
+
+(defun ttx--cleanup-temp-dir ()
+  "Delete the temporary directory used for woff2 decompression."
+  (when (and ttx--temp-dir (file-directory-p ttx--temp-dir))
+    (delete-directory ttx--temp-dir t)))
 
 (defun ttx--init-buffer (filename)
   "Initialize buffer for FILENAME with table skeleton."
@@ -223,11 +258,17 @@ Set to nil to start with only the skeleton."
   (setq buffer-read-only t)
   (let ((filename (buffer-file-name)))
     (when (and filename (not ttx-font-filename))
-      (setq-local ttx-font-filename filename)
-      (ttx--init-buffer filename))))
+      (let ((font-filename
+             (if (string-match-p "\\.woff2\\'" filename)
+                 (ttx--decompress-woff2 filename)
+               filename)))
+        (setq-local ttx-font-filename font-filename)
+        (ttx--init-buffer font-filename)))))
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.[ot]tf\\'" . ttx-mode))
+;;;###autoload
+(add-to-list 'auto-mode-alist '("\\.woff2\\'" . ttx-mode))
 
-(provide 'ttx)
-;;; ttx.el ends here
+(provide 'ttx-mode)
+;;; ttx-mode.el ends here
