@@ -172,7 +172,7 @@ The temp directory is stored in `ttx--temp-dir' and cleaned up on buffer kill."
     (let ((inhibit-read-only t))
       (goto-char (point-max))
       (when (re-search-backward "</ttFont>" nil t)
-        (insert "\n\n  " table-xml "\n")
+        (insert "\n\n" table-xml "\n")
         (re-search-backward (format "^\\s-*<%s\\b" (regexp-quote table-tag)) nil t))
       (push table-tag ttx--loaded-tables)
       (set-buffer-modified-p nil)
