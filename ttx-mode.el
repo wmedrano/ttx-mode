@@ -142,50 +142,84 @@ The temp directory is stored in `ttx--temp-dir' and cleaned up on buffer kill."
     (erase-buffer)
     (insert (ttx--generate-skeleton tables))
     (set-buffer-modified-p nil)
-    (let ((available-tags (mapcar #'car tables)))
-      (dolist (tag ttx-default-tables)
-        (when (member tag available-tags)
-          (ttx-load-table tag))))
+    (let* ((available-tags (mapcar #'car tables))
+           (to-load (cl-remove-if-not (lambda (tag) (member tag available-tags))
+                                      ttx-default-tables)))
+      (ttx-load-tables to-load))
     (goto-char (point-min))))
 
-(defun ttx-load-table (table-tag)
-  "Load TABLE-TAG into the current buffer."
-  (interactive
-   (let ((available (cl-remove-if (lambda (table)
-                                    (member (car table) ttx--loaded-tables))
-                                  ttx--available-tables)))
-     (if (null available)
-         (user-error "All tables are already loaded")
-       (list (completing-read "Load table: "
-                              (mapcar #'car available)
-                              nil t)))))
+(defun ttx--available-tables-to-load ()
+  "Return list of tables not yet loaded."
+  (unless ttx-font-filename
+    (user-error "Not in a ttx-mode buffer"))
+  (cl-remove-if (lambda (table)
+                  (member (car table) ttx--loaded-tables))
+                ttx--available-tables))
+
+(defun ttx-load-tables (table-tags)
+  "Load TABLE-TAGS into the current buffer.
+TABLE-TAGS is a list of table tag strings."
   (unless ttx-font-filename
     (user-error "No font file associated with this buffer"))
-  (let* ((cmd (format "%s -q -t %s -o - %s"
-                      ttx-command
-                      (shell-quote-argument table-tag)
-                      (shell-quote-argument ttx-font-filename)))
-         (xml-output (shell-command-to-string cmd))
-         (table-xml (ttx--extract-table-xml xml-output table-tag)))
-    (unless table-xml
-      (user-error "Failed to extract table %s with %s" table-tag cmd))
-    (let ((inhibit-read-only t))
+  (when table-tags
+    (let* ((tags-args (mapconcat (lambda (tag) (format "-t %s" (shell-quote-argument tag)))
+                                table-tags " "))
+           (cmd (format "%s -q %s -o - %s"
+                        ttx-command
+                        tags-args
+                        (shell-quote-argument ttx-font-filename)))
+           (xml-output (shell-command-to-string cmd)))
+      (dolist (tag table-tags)
+        (let ((table-xml (ttx--extract-table-xml xml-output tag)))
+          (if (not table-xml)
+              (message "Failed to extract table %s" tag)
+            (let ((inhibit-read-only t))
+              (save-excursion
+                (goto-char (point-max))
+                (when (re-search-backward "</ttFont>" nil t)
+                  (insert "\n\n" table-xml "\n")))
+              (cl-pushnew tag ttx--loaded-tables :test #'string=)))))
+      (set-buffer-modified-p nil))))
+
+(defun ttx-load-all-tables ()
+  "Load all available tables into the current buffer."
+  (interactive)
+  (let ((available (mapcar #'car (ttx--available-tables-to-load))))
+    (if (null available)
+        (message "All tables are already loaded")
+      (ttx-load-tables available)
+      (message "Loaded %d tables" (length available)))))
+
+(defun ttx-load-table (table-tag)
+  "Load TABLE-TAG into the current buffer.
+If TABLE-TAG is \"all\", load all available tables."
+  (interactive
+   (let ((available (ttx--available-tables-to-load)))
+     (if (null available)
+         (user-error "All tables are already loaded")
+       (let ((tags (mapcar #'car available)))
+         (list (completing-read "Load table: "
+                                (cons "all" tags)
+                                nil t))))))
+  (if (string= table-tag "all")
+      (ttx-load-all-tables)
+    (ttx-load-tables (list table-tag))
+    (let ((search-tag (string-replace "/" "_" table-tag)))
       (goto-char (point-max))
-      (when (re-search-backward "</ttFont>" nil t)
-        (insert "\n\n" table-xml "\n")
-        (re-search-backward (format "^\\s-*<%s\\b" (regexp-quote table-tag)) nil t))
-      (push table-tag ttx--loaded-tables)
-      (set-buffer-modified-p nil)
-      (message "Loaded table: %s" table-tag))))
+      (when (re-search-backward (format "^\\s-*<%s\\b" (regexp-quote search-tag)) nil t)
+        (message "Loaded table: %s" table-tag)))))
 
 (defun ttx-unload-table (table-tag)
   "Unload TABLE-TAG from the current buffer."
   (interactive
-   (if (null ttx--loaded-tables)
-       (user-error "No tables are loaded")
-     (list (completing-read "Unload table: "
-                            ttx--loaded-tables
-                            nil t))))
+   (progn
+     (unless ttx-font-filename
+       (user-error "Not in a ttx-mode buffer"))
+     (if (null ttx--loaded-tables)
+         (user-error "No tables are loaded")
+       (list (completing-read "Unload table: "
+                              ttx--loaded-tables
+                              nil t)))))
   (let ((inhibit-read-only t))
     (goto-char (point-min))
     (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote table-tag)))
@@ -213,6 +247,7 @@ The temp directory is stored in `ttx--temp-dir' and cleaned up on buffer kill."
 (defvar ttx-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-l") #'ttx-load-table)
+    (define-key map (kbd "C-c C-M-l") #'ttx-load-all-tables)
     (define-key map (kbd "C-c C-k") #'ttx-unload-table)
     map)
   "Keymap for `ttx-mode'.")
