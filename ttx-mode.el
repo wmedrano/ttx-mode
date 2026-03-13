@@ -35,6 +35,7 @@
 
 (defgroup ttx nil
   "TrueType/OpenType font viewer."
+  :prefix "ttx-"
   :group 'tools)
 
 (defcustom ttx-command "ttx"
@@ -95,38 +96,39 @@ Set to nil to start with only the skeleton."
 
 (defun ttx--extract-table-xml (xml-output table-tag)
   "Extract just the TABLE-TAG element from XML-OUTPUT."
-  (let ((table-tag (string-replace "/" "_" table-tag)))
+  (let ((tag-name (string-replace "/" "_" table-tag)))
     (with-temp-buffer
       (insert xml-output)
       (goto-char (point-min))
-      (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote table-tag)))
-            (end-regex (format "^\\s-*</%s>" (regexp-quote table-tag))))
+      (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote tag-name)))
+            (end-regex (format "^\\s-*</%s>" (regexp-quote tag-name))))
         (when (re-search-forward start-regex nil t)
           (beginning-of-line)
           (let ((start (point)))
-            (if (re-search-forward end-regex nil t)
-                (buffer-substring-no-properties start (point))
-              nil)))))))
+            (when (re-search-forward end-regex nil t)
+              (buffer-substring-no-properties start (point)))))))))
 
 (defun ttx--decompress-woff2 (woff2-filename)
-  "Decompress WOFF2-FILENAME to a temp directory and return the resulting .ttf path.
+  "Decompress WOFF2-FILENAME to a temp directory, return resulting .ttf path.
 The temp directory is stored in `ttx--temp-dir' and cleaned up on buffer kill."
   (let* ((temp-dir (make-temp-file "ttx-woff2-" t))
          (base (file-name-nondirectory woff2-filename))
          (temp-woff2 (expand-file-name base temp-dir))
          (ttf-name (concat (file-name-sans-extension base) ".ttf"))
          (temp-ttf (expand-file-name ttf-name temp-dir)))
-    (copy-file woff2-filename temp-woff2)
-    (let ((exit-code (call-process ttx-woff2-decompress-command nil nil nil temp-woff2)))
-      (unless (zerop exit-code)
-        (delete-directory temp-dir t)
-        (error "woff2_decompress failed with exit code %d for %s" exit-code woff2-filename)))
-    (unless (file-exists-p temp-ttf)
-      (delete-directory temp-dir t)
-      (error "woff2_decompress did not produce %s" temp-ttf))
-    (setq ttx--temp-dir temp-dir)
-    (add-hook 'kill-buffer-hook #'ttx--cleanup-temp-dir nil t)
-    temp-ttf))
+    (unwind-protect
+        (progn
+          (copy-file woff2-filename temp-woff2)
+          (let ((exit-code (call-process ttx-woff2-decompress-command nil nil nil temp-woff2)))
+            (unless (zerop exit-code)
+              (error "Command woff2_decompress failed with exit code %d for %s" exit-code woff2-filename)))
+          (unless (file-exists-p temp-ttf)
+            (error "Command woff2_decompress did not produce %s" temp-ttf))
+          (setq ttx--temp-dir temp-dir)
+          (add-hook 'kill-buffer-hook #'ttx--cleanup-temp-dir nil t)
+          temp-ttf)
+      (unless ttx--temp-dir
+        (delete-directory temp-dir t)))))
 
 (defun ttx--cleanup-temp-dir ()
   "Delete the temporary directory used for woff2 decompression."
@@ -171,14 +173,14 @@ TABLE-TAGS is a list of table tag strings."
            (xml-output (shell-command-to-string cmd)))
       (dolist (tag table-tags)
         (let ((table-xml (ttx--extract-table-xml xml-output tag)))
-          (if (not table-xml)
-              (message "Failed to extract table %s" tag)
-            (let ((inhibit-read-only t))
-              (save-excursion
-                (goto-char (point-max))
-                (when (re-search-backward "</ttFont>" nil t)
-                  (insert "\n\n" table-xml "\n")))
-              (cl-pushnew tag ttx--loaded-tables :test #'string=)))))
+          (if table-xml
+              (let ((inhibit-read-only t))
+                (save-excursion
+                  (goto-char (point-max))
+                  (when (re-search-backward "</ttFont>" nil t)
+                    (insert "\n\n" table-xml "\n")))
+                (cl-pushnew tag ttx--loaded-tables :test #'string=))
+            (message "Failed to extract table %s" tag))))
       (set-buffer-modified-p nil))))
 
 (defun ttx-load-all-tables ()
@@ -220,10 +222,11 @@ If TABLE-TAG is \"all\", load all available tables."
        (list (completing-read "Unload table: "
                               ttx--loaded-tables
                               nil t)))))
-  (let ((inhibit-read-only t))
+  (let* ((inhibit-read-only t)
+         (search-tag (string-replace "/" "_" table-tag)))
     (goto-char (point-min))
-    (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote table-tag)))
-          (end-regex (format "^\\s-*</%s>" (regexp-quote table-tag))))
+    (let ((start-regex (format "^\\s-*<%s\\b" (regexp-quote search-tag)))
+          (end-regex (format "^\\s-*</%s>" (regexp-quote search-tag))))
       (if (re-search-forward start-regex nil t)
           (progn
             (beginning-of-line)
@@ -288,7 +291,6 @@ If TABLE-TAG is \"all\", load all available tables."
 ;;;###autoload
 (define-derived-mode ttx-mode nxml-mode "TTX"
   "Major mode for viewing TrueType/OpenType font files as XML."
-  :keymap ttx-mode-map
   (setq-local revert-buffer-function #'ttx-revert-buffer)
   (setq buffer-read-only t)
   (let ((filename (buffer-file-name)))
